@@ -20,140 +20,219 @@ wrangler.toml           Pages + KV のバインディング設定
 package.json            wrangler スクリプト
 ```
 
-## ローカル開発
+## デプロイ — ダッシュボードだけで完結する手順
 
-1. 依存をインストール
+ターミナルや `wrangler` を使わず、Cloudflare のダッシュボード（ブラウザ）だけでデプロイする手順。**この章だけで本番運用に到達できる。** ローカル動作確認をしたい場合のみ次章「ローカル開発」を読む。
+
+### 事前に揃えておくもの
+
+- Cloudflare アカウント（無料プランで可）— https://dash.cloudflare.com/sign-up
+- このリポジトリが GitHub にある状態（このプロジェクトはすでに GitHub に push 済み）
+
+### 手順 1: KV ネームスペースを作る（ブラウザ）
+
+KV は Cloudflare のキー・バリュー型ストレージ。ここに記録データが入る。
+
+1. ブラウザで https://dash.cloudflare.com を開いてログイン。
+2. 左サイドバーの **Workers & Pages** をクリック。
+3. ページ上部のタブのうち **KV** をクリック。
+   - もし左サイドバーに直接 **Storage & Databases** → **KV** がある UI バージョンならそちらでも同じ。
+4. 右上の **Create a namespace**（または **Create namespace**）をクリック。
+5. 入力欄に `RECORDS` と入れて **Add** をクリック。
+6. 一覧に `RECORDS` という行が追加される。これで KV 作成は完了。ID は後の手順では使わないので覚えなくて良い（次の手順で名前から選ぶ）。
+
+### 手順 2: GitHub リポジトリを Pages に接続する
+
+1. 左サイドバー **Workers & Pages** に戻る。
+2. **Create application** をクリック → **Pages** タブを選択 → **Connect to Git** をクリック。
+3. **GitHub** を選び、Cloudflare に GitHub アクセスを許可する画面で承認。リポジトリ単位で許可可能。
+4. リポジトリ一覧から `Sessions`（このリポジトリ）を選び **Begin setup** をクリック。
+5. **Set up builds and deployments** 画面で次のように入力:
+
+   | 項目 | 値 |
+   | --- | --- |
+   | Project name | 任意（例: `time-blocked-todo`）。これがサブドメインになる。 |
+   | Production branch | デプロイしたいブランチ名。`claude/time-blocked-todo-app-0orim` を本番にするならそれ、`main` にマージしてからにするなら `main`。 |
+   | Framework preset | **None** |
+   | Build command | **空欄のまま** |
+   | Build output directory | `public` |
+   | Root directory (advanced) | 空欄のまま |
+
+6. 一番下の **Save and Deploy** をクリック。
+7. ビルドログが流れて 1 分程度で「Success!」と表示される。`https://<project-name>.pages.dev` という URL がもらえる。
+   - **この時点ではまだ KV をつないでいないので、UI は表示されるが API が 500 になる。** 続けて手順 3 で繋ぐ。
+
+### 手順 3: KV を Pages プロジェクトにバインドする
+
+「Pages Functions の中で `env.RECORDS` という名前で KV を使えるようにする」設定。
+
+1. 左サイドバー **Workers & Pages** → 一覧から作ったプロジェクト（例 `time-blocked-todo`）をクリック。
+2. 上部タブの **Settings** をクリック。
+3. 左カラムから **Functions** を選択。
+4. 下にスクロールして **KV namespace bindings** セクションを探す → **Add binding** をクリック。
+5. 入力:
+   - **Variable name**: `RECORDS`（**この文字列のまま。コードがこの名前で参照している**）
+   - **KV namespace**: ドロップダウンから手順 1 で作った `RECORDS` を選ぶ
+6. **Save** をクリック。
+7. 同じ画面の上のほうにある環境切替（**Production / Preview**）が **Preview** 側にも切り替えて、4〜6 を同じ内容でもう一度実施する。
+   - こうすると PR ごとの preview deployment でも KV が読める。
+
+### 手順 4: 再デプロイして反映
+
+KV バインディングは「**次のデプロイから**」有効になるため、いま動いているデプロイにはまだ効いていない。再デプロイする。
+
+**ダッシュボードでやる場合:**
+
+1. プロジェクトページ → **Deployments** タブ。
+2. 最新デプロイ行の右端 **⋯ (More actions)** → **Retry deployment** をクリック。
+
+**ローカルから空コミットを push する場合:**
+
+```bash
+git commit --allow-empty -m "Apply KV binding"
+git push
+```
+
+push を契機に自動で再デプロイが走る。
+
+### 手順 5: 動作確認
+
+- ブラウザで `https://<project-name>.pages.dev` を開く。
+- セッションタブの「取り組む内容」に何か書いて textarea からフォーカスを外す → 数秒待って **ページをリロード**しても入力が残っていれば KV 保存成功。
+- 別の端末（スマホなど）から同じ URL を開き、同じ内容が見えれば同期 OK。
+- うまく行かない場合は DevTools (F12) → Network タブで `/api/records/YYYY-MM-DD` のレスポンスを確認:
+  - **500 + `KV binding "RECORDS" is not configured.`** → 手順 3 の Variable name が `RECORDS` になっていない、または手順 4 の再デプロイをしていない。
+  - **200 だが `{}`** → 正常。データ未入力なだけ。
+
+### （任意）独自ドメインを当てる
+
+1. プロジェクトページ → **Custom domains** タブ → **Set up a custom domain**。
+2. 使いたいドメイン（例 `todo.example.com`）を入力 → **Continue** → **Activate domain**。
+3. 同一 Cloudflare アカウントで DNS を管理しているドメインなら CNAME が自動で追加される。
+
+---
+
+## ローカル開発（任意。ブラウザで先にデプロイしたなら不要）
+
+ローカルマシンで動作確認しながら開発したい場合のみ必要。`wrangler` という Cloudflare 公式の CLI ツールを使う。
+
+### `wrangler` とは
+
+- Cloudflare が配布している Node.js 製のコマンドラインツール。
+- このプロジェクトの `package.json` に開発依存として書かれているので **個別にインストール不要**。`npx wrangler ...` または `npm run ...` で実行できる。
+- 実行は **このリポジトリのルートディレクトリ**（`wrangler.toml` がある階層）で行う。
+
+### セットアップ
+
+ターミナルを開き、このリポジトリのルートディレクトリに移動した上で:
+
+1. **依存をインストール**
 
    ```bash
    npm install
    ```
 
-2. KV ネームスペースを作成
+   `node_modules/` ができて `wrangler` 含む依存がダウンロードされる。
+
+2. **Cloudflare にログイン**
 
    ```bash
-   npx wrangler kv namespace create RECORDS
-   npx wrangler kv namespace create RECORDS --preview
+   npx wrangler login
    ```
 
-   出力された `id` と `preview_id` を `wrangler.toml` に貼り付ける。
+   - 自動でブラウザが開き、Cloudflare のログイン画面 → 「Allow（許可）」ボタンが表示される。許可するとターミナルに戻り `Successfully logged in.` と出る。
+   - SSH 越し等でブラウザが開けない環境では URL が表示されるので、別マシンのブラウザにコピペして開く。
 
-3. ローカルで起動
+3. **使う KV ネームスペースの ID を確認**
 
-   ```bash
-   npm run dev
+   ダッシュボードでもう作っているなら、それを再利用する。新規に CLI から作る場合は次の節を参照。
+
+   - ブラウザ: **Workers & Pages** → **KV** → `RECORDS` 行の **ID** カラムに 32 文字の 16 進文字列がある。これをコピー。
+
+4. **`wrangler.toml` を編集**
+
+   テキストエディタで `wrangler.toml` を開き、`[[kv_namespaces]]` セクションを次のように書き換える:
+
+   ```toml
+   [[kv_namespaces]]
+   binding = "RECORDS"
+   id = "ここに手順3でコピーしたIDを貼る"
+   preview_id = "ここにも同じIDを貼ってOK"
    ```
 
-   http://localhost:8788 にアクセス。
+   - `id` はリモートのリソース識別子であって秘密情報ではないので、コミットしても問題ない。
+   - `preview_id` はローカルの `wrangler pages dev` で使われる。本番と分けたければ別の KV を作って ID を入れる。
 
-## デプロイ
+### CLI から KV を新規作成する場合（手順 3 の代替）
 
-デプロイ方法は2通り。**A. ダッシュボードで Git 連携**（推奨。push するだけで自動デプロイ）と、**B. Wrangler CLI で直接 publish** のいずれか。どちらの場合も先に「事前準備」と「KV ネームスペース作成」を済ませておく。
-
-### 事前準備
-
-- Cloudflare アカウント（無料プランで可）。
-- Node.js 18 以上。
-- このリポジトリを GitHub / GitLab に push 済みであること（A を選ぶ場合）。
-- ローカルから wrangler を使う場合は一度ログイン:
-
-  ```bash
-  npx wrangler login
-  ```
-
-  ブラウザが開くので承認する。
-
-### KV ネームスペース作成（A・B 共通）
-
-本番用とプレビュー用（Pages の preview deployment で使う）を作成する:
+ダッシュボードを使わず CLI で作りたい場合:
 
 ```bash
 npx wrangler kv namespace create RECORDS
-npx wrangler kv namespace create RECORDS --preview
 ```
 
-それぞれ次のような出力が出る:
+実行すると次のような出力が出る:
 
 ```
 🌀 Creating namespace with title "time-blocked-todo-RECORDS"
 ✨ Success!
 Add the following to your configuration file in your kv_namespaces array:
-{ binding = "RECORDS", id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+{ binding = "RECORDS", id = "1a2b3c4d5e6f7890abcdef1234567890" }
 ```
 
-`id` と `preview_id` を `wrangler.toml` の該当箇所に貼り付ける:
+ここに出てきた `id` 値（クォートの中の 32 文字）を `wrangler.toml` の `id` に貼る。preview 用に分けたい場合は:
 
-```toml
-[[kv_namespaces]]
-binding = "RECORDS"
-id = "<本番 KV の ID>"
-preview_id = "<プレビュー KV の ID>"
+```bash
+npx wrangler kv namespace create RECORDS --preview
 ```
 
-> **メモ:** `wrangler.toml` の `id` 値はシークレットではなく Cloudflare 内のリソース識別子なので、リポジトリにコミットして問題ない。
+をもう一度実行し、出てきた ID を `preview_id` に貼る。
 
-### A. Cloudflare ダッシュボードで Git 連携（推奨）
+### ローカル起動
 
-1. https://dash.cloudflare.com にログインし、左メニュー **Workers & Pages** を開く。
-2. **Create application** → **Pages** タブ → **Connect to Git** を選択。
-3. GitHub/GitLab を認可し、このリポジトリを選択。
-4. **Set up builds and deployments** で次のように設定:
-   - **Production branch**: 本番に当てたいブランチ（例: `main`）。
-   - **Framework preset**: `None`
-   - **Build command**: 空欄のまま
-   - **Build output directory**: `public`
-   - **Root directory**: 空欄のまま
-5. **Save and Deploy** を押す。1回目のデプロイが走り、`https://<project>.pages.dev` で公開される。
-6. デプロイが終わったら **Settings → Functions → KV namespace bindings** に移動:
-   - **Variable name**: `RECORDS`
-   - **KV namespace**: 上で作成した本番 KV を選択
-   - **Add binding** を押す。
-   - 同じ画面の "Preview" 用にも `RECORDS` バインディングを追加し、preview 用の KV を選択する。
-7. バインディングは **次回以降のデプロイ**で有効になる。**Deployments** タブから最新デプロイの右の `…` → **Retry deployment** を押すか、空コミットを push して再デプロイする:
+```bash
+npm run dev
+```
 
-   ```bash
-   git commit --allow-empty -m "Trigger redeploy with KV binding"
-   git push
-   ```
+これは内部的に `npx wrangler pages dev public` を実行している。
 
-8. デプロイ後、ブラウザで `https://<project>.pages.dev` にアクセス。セッションタブで一言入力 → 達成ボタンを押し、別の端末で同じ URL を開いて同じ状態が見えれば KV 同期成功。
+- 起動するとターミナルに `[wrangler] Ready on http://localhost:8788` と出る。ブラウザでそのアドレスを開く。
+- Ctrl+C で停止。
+- KV はローカルファイル（`.wrangler/` 配下）に保存され、リモートの本番 KV には書き込まれない。**本番 KV を直接読み書きしたい場合**は:
 
-### B. Wrangler CLI から直接デプロイ
+  ```bash
+  npx wrangler pages dev public --remote
+  ```
 
-ダッシュボード連携を使わず、ローカルから直接 publish したい場合。
+  で起動する。
 
-1. KV を作成し `wrangler.toml` に ID を反映済みであること（前述の手順）。
-2. 初回デプロイ:
+### CLI から直接デプロイする（任意）
 
-   ```bash
-   npx wrangler pages deploy public --project-name time-blocked-todo
-   ```
+ダッシュボード連携を使わず、ローカルから手で publish したい場合:
 
-   - 同名の Pages プロジェクトがなければ新規作成され、本番ブランチを尋ねられる（`main` 等を指定）。
-   - 以降は `npm run deploy`（`wrangler pages deploy public` のエイリアス）で同じプロジェクトに上書きデプロイされる。
+```bash
+npm run deploy
+```
 
-3. CLI でデプロイした場合も Functions の KV バインディングは **Pages プロジェクト側の設定** が読まれる。`wrangler.toml` に書いたバインディングは `wrangler pages dev`（ローカル）に適用される一方、リモートの Pages Functions では使われないため、A の手順 6〜7 と同じく **ダッシュボード上で `RECORDS` バインディングを設定**する必要がある。
+これは `npx wrangler pages deploy public` のエイリアス。初回は対話で:
 
-### カスタムドメインを当てる（任意）
+- **Project name**: 任意の名前（例 `time-blocked-todo`）
+- **Production branch**: 本番扱いするブランチ名
 
-1. ダッシュボードの該当 Pages プロジェクト → **Custom domains** → **Set up a custom domain**。
-2. 使いたいドメイン（例: `todo.example.com`）を入力。同一 Cloudflare アカウントで管理されているドメインなら自動で CNAME が追加される。
+を聞かれる。2回目以降は同じプロジェクトに上書きデプロイされる。
 
-### デプロイ確認チェックリスト
-
-- [ ] `https://<project>.pages.dev` にアクセスして UI が表示される。
-- [ ] セッションタブで内容を入力 → ページをリロードしても残る（= KV に保存されている）。
-- [ ] 別の端末/ブラウザから同じ URL にアクセスして同じデータが見える。
-- [ ] 記録タブの「直近7日間」グリッドが表示され、セルをタップすると詳細編集が開く。
-- [ ] DevTools の Network タブで `/api/records/YYYY-MM-DD` が **200** を返している（500 の場合は KV バインディング未設定の可能性が高い）。
+> **重要:** CLI から deploy しても、**本番 Functions が読む KV バインディングは「ダッシュボード側の Pages プロジェクト設定」**。`wrangler.toml` のバインディングはローカルの `wrangler pages dev` 用にしか効かない。CLI デプロイの場合も上の「ダッシュボードだけで完結する手順」の **手順 3（KV を Pages プロジェクトにバインド）** は必要。
 
 ### よくあるハマりどころ
 
 | 症状 | 原因 / 対処 |
 | --- | --- |
-| `/api/records/...` が 500 で `KV binding "RECORDS" is not configured.` | ダッシュボードで KV バインディングを追加していない、または追加後に再デプロイしていない。 |
-| ローカルで `npm run dev` が KV エラーを出す | `wrangler.toml` の `preview_id` が空のまま。`wrangler kv namespace create RECORDS --preview` で作成して貼り付ける。 |
-| 別端末から見たら違うデータに見える | 端末ごとにローカル日付が違う日にまたがっている可能性（深夜帯など）。本アプリは「クライアントのローカル日付」をキーにする設計。 |
-| ダッシュボードで Build output directory を間違えた | **Settings → Builds & deployments → Build configurations** から `public` に修正後、再デプロイ。 |
+| 本番 `/api/records/...` が 500 で `KV binding "RECORDS" is not configured.` | ダッシュボード手順 3 の KV バインディングが未設定、または 4 の再デプロイをしていない。Variable name が `RECORDS`（大文字）になっているか確認。 |
+| ローカル `npm run dev` 起動時に KV エラー | `wrangler.toml` の `id` / `preview_id` が `REPLACE_WITH_...` のまま。実 ID に貼り替える。 |
+| `npx wrangler login` でブラウザが開かない | SSH 経由などで GUI が無い環境。表示される URL を手元 PC のブラウザで開く。 |
+| `wrangler pages deploy` が「project not found」 | `--project-name <name>` を指定するか、初回対話で新規作成する。 |
+| 別端末から見たら違う日のデータ | アプリは「クライアント端末のローカル日付」をキーにする。深夜帯やタイムゾーン違いで日付がズレる可能性あり。 |
+| Build output directory を間違えた | プロジェクトページ → **Settings** → **Builds & deployments** → **Build configurations** → **Edit** から `public` に修正して再デプロイ。 |
 
 ## API
 
