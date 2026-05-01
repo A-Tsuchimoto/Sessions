@@ -29,6 +29,8 @@ package.json            wrangler スクリプト
 - Cloudflare アカウント（無料プランで可）— https://dash.cloudflare.com/sign-up
 - このリポジトリが GitHub にある状態（このプロジェクトはすでに GitHub に push 済み）
 
+> **重要:** `wrangler.toml` の `[[kv_namespaces]]` ブロックは **コメントアウトされた状態でリポジトリに入れてある**。これは `wrangler.toml` に実 KV ID を書かないと Pages のデプロイが `Error 8000022: Invalid KV namespace ID` で落ちるため。本番の KV バインディングは **下の手順 3 でダッシュボードから設定する**。`wrangler.toml` を編集する必要はないし、編集してはいけない（編集して push したら本番デプロイが壊れる）。ローカル開発で KV を使いたい場合のみ、後章「ローカル開発」を参照して **ローカルでだけ** 編集する。
+
 ### 手順 1: KV ネームスペースを作る（ブラウザ）
 
 KV は Cloudflare のキー・バリュー型ストレージ。ここに記録データが入る。
@@ -149,9 +151,9 @@ push を契機に自動で再デプロイが走る。
 
    - ブラウザ: **Workers & Pages** → **KV** → `RECORDS` 行の **ID** カラムに 32 文字の 16 進文字列がある。これをコピー。
 
-4. **`wrangler.toml` を編集**
+4. **`wrangler.toml` を編集（ローカル限定。コミット禁止）**
 
-   テキストエディタで `wrangler.toml` を開き、`[[kv_namespaces]]` セクションを次のように書き換える:
+   テキストエディタで `wrangler.toml` を開き、`[[kv_namespaces]]` ブロックの **コメントを外して** ID を貼る:
 
    ```toml
    [[kv_namespaces]]
@@ -160,7 +162,16 @@ push を契機に自動で再デプロイが走る。
    preview_id = "ここにも同じIDを貼ってOK"
    ```
 
-   - `id` はリモートのリソース識別子であって秘密情報ではないので、コミットしても問題ない。
+   > **⚠️ この変更を git に commit / push してはいけない。** 本番デプロイは `wrangler.toml` を読むため、ここに実 ID が入っていると Production / Preview の挙動が dashboard 設定と二重になり混乱する。誤って push しないよう、編集後は次のいずれかで作業ツリーから隠しておくのが安全:
+   >
+   > ```bash
+   > # 一時的に変更を git の追跡から外す（戻す: --no-skip-worktree）
+   > git update-index --skip-worktree wrangler.toml
+   > ```
+   >
+   > 元に戻したいときは `git update-index --no-skip-worktree wrangler.toml`。
+
+   - `id` はリモートのリソース識別子であって秘密情報ではない。
    - `preview_id` はローカルの `wrangler pages dev` で使われる。本番と分けたければ別の KV を作って ID を入れる。
 
 ### CLI から KV を新規作成する場合（手順 3 の代替）
@@ -228,7 +239,8 @@ npm run deploy
 | 症状 | 原因 / 対処 |
 | --- | --- |
 | 本番 `/api/records/...` が 500 で `KV binding "RECORDS" is not configured.` | ダッシュボード手順 3 の KV バインディングが未設定、または 4 の再デプロイをしていない。Variable name が `RECORDS`（大文字）になっているか確認。 |
-| ローカル `npm run dev` 起動時に KV エラー | `wrangler.toml` の `id` / `preview_id` が `REPLACE_WITH_...` のまま。実 ID に貼り替える。 |
+| デプロイログに `Error 8000022: Invalid KV namespace ID` | `wrangler.toml` の `[[kv_namespaces]]` ブロックがコメントアウトされていない、または `id` がプレースホルダ文字列のまま。本番では `wrangler.toml` の KV ブロックは **必ずコメントアウト** にしておき、バインディングはダッシュボードで設定する。 |
+| ローカル `npm run dev` 起動時に KV エラー | `wrangler.toml` の `[[kv_namespaces]]` を **ローカルのみ** 有効化し、`id` / `preview_id` に実 KV ID を貼る。push しないこと。 |
 | `npx wrangler login` でブラウザが開かない | SSH 経由などで GUI が無い環境。表示される URL を手元 PC のブラウザで開く。 |
 | `wrangler pages deploy` が「project not found」 | `--project-name <name>` を指定するか、初回対話で新規作成する。 |
 | 別端末から見たら違う日のデータ | アプリは「クライアント端末のローカル日付」をキーにする。深夜帯やタイムゾーン違いで日付がズレる可能性あり。 |

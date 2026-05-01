@@ -2,13 +2,25 @@ name = "time-blocked-todo"
 compatibility_date = "2024-09-01"
 pages_build_output_dir = "public"
 
-# Cloudflare KV namespace bound as `env.RECORDS` inside Pages Functions.
-# Create the namespace once with:
-#   npx wrangler kv namespace create RECORDS
-#   npx wrangler kv namespace create RECORDS --preview
-# then paste the returned IDs below (or set them in the Pages dashboard
-# under Settings -> Functions -> KV namespace bindings).
-[[kv_namespaces]]
-binding = "RECORDS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+# ──────────────────────────────────────────────────────────────────────────
+# KV namespace `RECORDS` — Pages Functions 内で `env.RECORDS` として参照される。
+#
+# 本番デプロイ:
+#   ダッシュボードで "Workers & Pages → 該当プロジェクト → Settings →
+#   Functions → KV namespace bindings" に Variable name = RECORDS で追加する。
+#   この wrangler.toml には書かない（書くとプレースホルダのままデプロイが
+#   失敗する。ダッシュボード設定だけで十分動く）。
+#
+# ローカル開発 (`npm run dev` = `wrangler pages dev public`):
+#   下のブロックの `#` を外して `id` / `preview_id` に実 KV namespace ID を
+#   貼り付ける。リモートの本番 KV を直接読み書きしたい場合は同じ ID を、
+#   ローカル独立で良ければ `wrangler kv namespace create RECORDS` 等で
+#   作った別 ID を入れる。実 ID をリポジトリにコミットしたくない場合は
+#   このブロックを編集したまま `git update-index --skip-worktree wrangler.toml`
+#   などで除外する。
+# ──────────────────────────────────────────────────────────────────────────
+
+# [[kv_namespaces]]
+# binding = "RECORDS"
+# id = "ここに 32 文字の hex KV ID"
+# preview_id = "ここに 32 文字の hex KV ID（同じでも別でも可）"
