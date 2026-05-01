@@ -26,4 +26,4 @@ pages_build_output_dir = "public"
 [[kv_namespaces]]
 binding = "RECORDS"
 id = "e1fdc3463b23487187bf38ab76b4a75c"
-preview_id = "<PASTE_KV_NAMESPACE_ID_HERE>"
+preview_id = "e1fdc3463b23487187bf38ab76b4a75c"
