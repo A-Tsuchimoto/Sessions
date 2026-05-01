@@ -1,8 +1,11 @@
-// GET  /api/records/:date  -> returns { session1: {task, achieved}, ... }
-// PUT  /api/records/:date  -> body: { session: 1-6, task?, achieved? }
-//                           Updates only the supplied fields for that session.
+// GET  /api/records/:date  -> { session1: {task, status}, ... }
+// PUT  /api/records/:date  -> body: { session: 1-6, task?, status?: 'achieved'|'off'|null,
+//                                     achieved?: boolean (legacy) }
+
+import { normalize, json, jsonError } from './_helpers.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const VALID_STATUS = new Set(['achieved', 'off']);
 
 export async function onRequest(context) {
   const { request, params, env } = context;
@@ -19,7 +22,7 @@ export async function onRequest(context) {
 
   if (request.method === 'GET') {
     const data = (await kv.get(key, 'json')) || {};
-    return json(data);
+    return json(normalize(data));
   }
 
   if (request.method === 'PUT') {
@@ -35,15 +38,31 @@ export async function onRequest(context) {
       return jsonError('Body must include "session" (1-6).', 400);
     }
 
-    const existing = (await kv.get(key, 'json')) || {};
+    const existing = normalize((await kv.get(key, 'json')) || {});
     const sessKey = `session${sessionNum}`;
-    const cur = existing[sessKey] || { task: '', achieved: false };
+    const cur = existing[sessKey] || { task: '', status: null };
 
-    const next = {
+    let nextStatus = cur.status;
+    if ('status' in body) {
+      if (body.status === null || body.status === undefined || body.status === '') {
+        nextStatus = null;
+      } else if (VALID_STATUS.has(body.status)) {
+        nextStatus = body.status;
+      } else {
+        return jsonError('status must be "achieved", "off", or null.', 400);
+      }
+    } else if ('achieved' in body) {
+      if (typeof body.achieved !== 'boolean') {
+        return jsonError('achieved must be boolean.', 400);
+      }
+      if (body.achieved) nextStatus = 'achieved';
+      else if (cur.status === 'achieved') nextStatus = null;
+    }
+
+    existing[sessKey] = {
       task: typeof body.task === 'string' ? body.task : cur.task,
-      achieved: typeof body.achieved === 'boolean' ? body.achieved : cur.achieved,
+      status: nextStatus,
     };
-    existing[sessKey] = next;
 
     await kv.put(key, JSON.stringify(existing));
     return json(existing);
@@ -53,15 +72,4 @@ export async function onRequest(context) {
     status: 405,
     headers: { Allow: 'GET, PUT' },
   });
-}
-
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-  });
-}
-
-function jsonError(message, status) {
-  return json({ error: message }, status);
 }

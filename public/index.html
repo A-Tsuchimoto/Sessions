@@ -44,7 +44,8 @@
             rows="3"
           ></textarea>
           <div class="actions">
-            <button id="achieve-btn" class="btn btn-primary">達成</button>
+            <button id="achieve-btn" class="btn btn-status" data-status="achieved">達成</button>
+            <button id="off-btn" class="btn btn-status btn-off" data-status="off">オフ</button>
             <span id="status-msg" class="status-msg" aria-live="polite"></span>
           </div>
         </div>
@@ -52,14 +53,28 @@
 
       <!-- Record Tab -->
       <section id="tab-record" class="tab-content">
-        <div class="card weekly-view">
-          <h2>直近7日間</h2>
+        <div class="card">
+          <div class="record-header">
+            <h2>直近7日間</h2>
+            <button id="export-csv" class="btn btn-secondary" type="button">CSVエクスポート</button>
+          </div>
           <div id="weekly-grid" class="weekly-grid"></div>
           <div class="legend">
             <span class="dot dot-achieved"></span> 達成
+            <span class="dot dot-off"></span> オフ
             <span class="dot dot-task"></span> 記入のみ
             <span class="dot dot-empty"></span> 未記入
           </div>
+        </div>
+
+        <div class="card calendar-view">
+          <div class="calendar-nav">
+            <button id="prev-month" class="btn-icon" type="button" aria-label="前の月">‹</button>
+            <h3 id="calendar-month-label">----年--月</h3>
+            <button id="next-month" class="btn-icon" type="button" aria-label="次の月">›</button>
+            <button id="today-month" class="btn-icon-text" type="button">今月</button>
+          </div>
+          <div id="calendar-grid" class="calendar-grid"></div>
         </div>
 
         <div class="card record-detail">

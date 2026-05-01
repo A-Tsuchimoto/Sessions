@@ -10,13 +10,14 @@ const SESSIONS = [
 ];
 
 const SESSION_TOTAL_MIN = 120;
+const STATUS_LABEL = { achieved: '達成', off: 'オフ' };
 
 const state = {
-  selectedDate: null,
-  selectedSession: null,
+  todayDate: null,
   todayRecord: {},
-  weekRecords: {},
-  saveTimer: null,
+  records: {}, // date -> { session1: {task, status}, ... }
+  selectedDate: null,
+  calendar: { year: null, month: null }, // month is 0-indexed
 };
 
 // ---------- date / session utils ----------
@@ -60,7 +61,8 @@ function getRemainingMinutes(session, now = new Date()) {
 }
 
 function getSessionProgress(session, now = new Date()) {
-  const elapsedMin = (now.getHours() - session.start) * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const elapsedMin =
+    (now.getHours() - session.start) * 60 + now.getMinutes() + now.getSeconds() / 60;
   return Math.max(0, Math.min(1, elapsedMin / SESSION_TOTAL_MIN));
 }
 
@@ -76,11 +78,18 @@ function sessionKey(num) {
   return `session${num}`;
 }
 
+function getStatusOf(rec) {
+  if (!rec) return null;
+  if (rec.status === 'achieved' || rec.status === 'off') return rec.status;
+  if (rec.achieved === true) return 'achieved'; // legacy
+  return null;
+}
+
 // ---------- API ----------
 
 async function apiGet(path) {
   const res = await fetch(path);
-  if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
+  if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`);
   return res.json();
 }
 
@@ -90,24 +99,40 @@ async function apiPut(path, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`PUT ${path} failed: ${res.status}`);
+  if (!res.ok) throw new Error(`PUT ${path} -> ${res.status}`);
   return res.json();
 }
 
 async function fetchDayRecord(dateStr) {
-  return apiGet(`/api/records/${dateStr}`);
+  const data = await apiGet(`/api/records/${dateStr}`);
+  state.records[dateStr] = data;
+  return data;
+}
+
+async function fetchRangeRecords(startStr, endStr) {
+  const data = await apiGet(
+    `/api/records?start=${encodeURIComponent(startStr)}&end=${encodeURIComponent(endStr)}`
+  );
+  Object.assign(state.records, data);
+  return data;
+}
+
+async function fetchAllRecords() {
+  return apiGet('/api/records');
 }
 
 async function saveSession(dateStr, sessionNum, fields) {
-  return apiPut(`/api/records/${dateStr}`, { session: sessionNum, ...fields });
+  const updated = await apiPut(`/api/records/${dateStr}`, { session: sessionNum, ...fields });
+  state.records[dateStr] = updated;
+  if (dateStr === state.todayDate) state.todayRecord = updated;
+  return updated;
 }
 
 // ---------- Session Tab ----------
 
 function renderTodayLabel() {
   const now = new Date();
-  document.getElementById('today-label').textContent =
-    `${formatDate(now)} (${dayOfWeekJa(now)})`;
+  document.getElementById('today-label').textContent = `${formatDate(now)} (${dayOfWeekJa(now)})`;
 }
 
 function renderSessionTab() {
@@ -120,6 +145,7 @@ function renderSessionTab() {
   const metaEl = document.getElementById('session-meta');
   const taskInput = document.getElementById('task-input');
   const achieveBtn = document.getElementById('achieve-btn');
+  const offBtn = document.getElementById('off-btn');
 
   if (current) {
     titleEl.textContent = sessionLabel(current);
@@ -130,12 +156,13 @@ function renderSessionTab() {
 
     taskInput.disabled = false;
     achieveBtn.disabled = false;
+    offBtn.disabled = false;
 
     const rec = state.todayRecord[sessionKey(current.num)] || {};
     if (document.activeElement !== taskInput) {
       taskInput.value = rec.task || '';
     }
-    setAchieveButton(achieveBtn, !!rec.achieved);
+    setStatusButtons(getStatusOf(rec));
   } else {
     const next = getNextSession(now);
     if (next) {
@@ -149,23 +176,22 @@ function renderSessionTab() {
       rangeEl.textContent = '';
       remainEl.textContent = '0';
       fillEl.style.width = '0%';
-      metaEl.textContent = '20:00以降のセッションはありません。明日の朝8時から再開します。';
+      metaEl.textContent =
+        '20:00以降のセッションはありません。明日の朝8時から再開します。';
     }
     taskInput.disabled = true;
     taskInput.value = '';
     achieveBtn.disabled = true;
-    setAchieveButton(achieveBtn, false);
+    offBtn.disabled = true;
+    setStatusButtons(null);
   }
 }
 
-function setAchieveButton(btn, achieved) {
-  if (achieved) {
-    btn.textContent = '達成済み';
-    btn.classList.add('achieved');
-  } else {
-    btn.textContent = '達成';
-    btn.classList.remove('achieved');
-  }
+function setStatusButtons(status) {
+  const achieveBtn = document.getElementById('achieve-btn');
+  const offBtn = document.getElementById('off-btn');
+  achieveBtn.classList.toggle('active', status === 'achieved');
+  offBtn.classList.toggle('active', status === 'off');
 }
 
 function flashStatus(msg, ms = 2000) {
@@ -190,15 +216,14 @@ async function handleTaskBlur() {
 
   flashStatus('保存中...', 0);
   try {
-    const updated = await saveSession(dateStr, current.num, { task: newTask });
-    state.todayRecord = updated;
+    await saveSession(dateStr, current.num, { task: newTask });
     flashStatus('保存しました');
-  } catch (e) {
+  } catch {
     flashStatus('保存に失敗しました');
   }
 }
 
-async function handleAchieveClick() {
+async function handleStatusButtonClick(targetStatus) {
   const now = new Date();
   const current = getCurrentSession(now);
   if (!current) return;
@@ -206,22 +231,24 @@ async function handleAchieveClick() {
   const dateStr = formatDate(now);
   const key = sessionKey(current.num);
   const cur = state.todayRecord[key] || {};
-  const newVal = !cur.achieved;
+  const curStatus = getStatusOf(cur);
+  const newStatus = curStatus === targetStatus ? null : targetStatus;
 
-  // Save current task value first if changed.
   const taskInput = document.getElementById('task-input');
   const taskVal = taskInput.value.trim();
 
   flashStatus('保存中...', 0);
   try {
-    const updated = await saveSession(dateStr, current.num, {
-      task: taskVal,
-      achieved: newVal,
-    });
-    state.todayRecord = updated;
-    setAchieveButton(document.getElementById('achieve-btn'), newVal);
-    flashStatus(newVal ? '達成を記録しました' : '達成を取り消しました');
-  } catch (e) {
+    await saveSession(dateStr, current.num, { task: taskVal, status: newStatus });
+    setStatusButtons(newStatus);
+    if (newStatus === 'achieved') flashStatus('達成を記録しました');
+    else if (newStatus === 'off') flashStatus('オフとして記録しました');
+    else flashStatus('状態を解除しました');
+    // Refresh derived views (calendar/weekly may now show a color change).
+    if (document.getElementById('tab-record').classList.contains('active')) {
+      renderRecordTab();
+    }
+  } catch {
     flashStatus('保存に失敗しました');
   }
 }
@@ -240,14 +267,21 @@ function getLast7Dates(now = new Date()) {
 
 async function loadWeekRecords() {
   const dates = getLast7Dates();
-  const results = await Promise.all(dates.map((d) => fetchDayRecord(d).catch(() => ({}))));
-  const map = {};
-  dates.forEach((d, i) => (map[d] = results[i] || {}));
-  state.weekRecords = map;
+  const start = dates[dates.length - 1];
+  const end = dates[0];
+  await fetchRangeRecords(start, end);
+}
+
+async function loadCalendarRecords() {
+  const { year, month } = state.calendar;
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+  await fetchRangeRecords(formatDate(first), formatDate(last));
 }
 
 function renderRecordTab() {
   renderWeeklyGrid();
+  renderCalendar();
   renderRecordDetail();
 }
 
@@ -255,10 +289,8 @@ function renderWeeklyGrid() {
   const grid = document.getElementById('weekly-grid');
   grid.innerHTML = '';
 
-  // Header row
   const corner = document.createElement('div');
   corner.className = 'header-cell';
-  corner.textContent = '';
   grid.appendChild(corner);
 
   for (const s of SESSIONS) {
@@ -279,30 +311,102 @@ function renderWeeklyGrid() {
     `;
     dayBtn.addEventListener('click', () => {
       state.selectedDate = dateStr;
-      state.selectedSession = null;
       renderRecordDetail();
+      renderCalendar();
     });
     grid.appendChild(dayBtn);
 
-    const rec = state.weekRecords[dateStr] || {};
+    const rec = state.records[dateStr] || {};
     for (const s of SESSIONS) {
       const cell = document.createElement('button');
-      const data = rec[sessionKey(s.num)];
+      const data = rec[sessionKey(s.num)] || {};
+      const status = getStatusOf(data);
       cell.className = 'session-cell row-button';
-      if (data?.achieved) cell.classList.add('achieved');
-      else if (data?.task) cell.classList.add('has-task');
-      if (state.selectedDate === dateStr && state.selectedSession === s.num) {
-        cell.classList.add('selected');
-      }
-      cell.title = `${dateStr} ${sessionLabel(s)}${data?.task ? ': ' + data.task : ''}`;
-      cell.textContent = data?.achieved ? '✓' : data?.task ? '・' : '';
+      if (status === 'achieved') cell.classList.add('achieved');
+      else if (status === 'off') cell.classList.add('off');
+      else if (data.task) cell.classList.add('has-task');
+      if (state.selectedDate === dateStr) cell.classList.add('selected');
+      const label = status ? STATUS_LABEL[status] : '';
+      cell.title = `${dateStr} ${sessionLabel(s)}${data.task ? ': ' + data.task : ''}${label ? ' [' + label + ']' : ''}`;
+      cell.textContent =
+        status === 'achieved' ? '✓' : status === 'off' ? '○' : data.task ? '・' : '';
       cell.addEventListener('click', () => {
         state.selectedDate = dateStr;
-        state.selectedSession = s.num;
         renderRecordDetail();
+        renderCalendar();
       });
       grid.appendChild(cell);
     }
+  }
+}
+
+function renderCalendar() {
+  const { year, month } = state.calendar;
+  const grid = document.getElementById('calendar-grid');
+  const label = document.getElementById('calendar-month-label');
+  if (year == null || month == null) return;
+  label.textContent = `${year}年${month + 1}月`;
+  grid.innerHTML = '';
+
+  const dows = ['日', '月', '火', '水', '木', '金', '土'];
+  dows.forEach((d, i) => {
+    const el = document.createElement('div');
+    el.className = 'cal-dow';
+    if (i === 0) el.classList.add('dow-sun');
+    if (i === 6) el.classList.add('dow-sat');
+    el.textContent = d;
+    grid.appendChild(el);
+  });
+
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  const startWeekday = firstDay.getDay();
+  const daysInMonth = lastDay.getDate();
+  const todayStr = formatDate(new Date());
+
+  for (let i = 0; i < startWeekday; i++) {
+    const empty = document.createElement('div');
+    empty.className = 'cal-day empty';
+    grid.appendChild(empty);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(year, month, day);
+    const dateStr = formatDate(d);
+    const cell = document.createElement('div');
+    cell.className = 'cal-day';
+    if (dateStr === todayStr) cell.classList.add('today');
+    if (state.selectedDate === dateStr) cell.classList.add('selected');
+
+    const num = document.createElement('span');
+    num.className = 'cal-day-num';
+    if (d.getDay() === 0) num.classList.add('dow-sun');
+    if (d.getDay() === 6) num.classList.add('dow-sat');
+    num.textContent = day;
+    cell.appendChild(num);
+
+    const bars = document.createElement('div');
+    bars.className = 'cal-bars';
+    const rec = state.records[dateStr] || {};
+    for (const s of SESSIONS) {
+      const bar = document.createElement('div');
+      bar.className = 'cal-bar';
+      const data = rec[sessionKey(s.num)] || {};
+      const status = getStatusOf(data);
+      if (status === 'achieved') bar.classList.add('achieved');
+      else if (status === 'off') bar.classList.add('off');
+      else if (data.task) bar.classList.add('has-task');
+      bars.appendChild(bar);
+    }
+    cell.appendChild(bars);
+
+    cell.addEventListener('click', () => {
+      state.selectedDate = dateStr;
+      renderRecordDetail();
+      renderCalendar();
+      renderWeeklyGrid();
+    });
+    grid.appendChild(cell);
   }
 }
 
@@ -318,16 +422,12 @@ function renderRecordDetail() {
 
   const d = parseDate(state.selectedDate);
   titleEl.textContent = `${state.selectedDate} (${dayOfWeekJa(d)})`;
-
-  const rec = state.weekRecords[state.selectedDate] || {};
+  const rec = state.records[state.selectedDate] || {};
 
   for (const s of SESSIONS) {
     const data = rec[sessionKey(s.num)] || {};
     const row = document.createElement('div');
     row.className = 'record-row';
-    if (state.selectedSession === s.num) {
-      row.style.outline = '2px solid var(--primary)';
-    }
 
     const meta = document.createElement('div');
     meta.className = 'meta';
@@ -347,13 +447,27 @@ function renderRecordDetail() {
     const actions = document.createElement('div');
     actions.className = 'row-actions';
 
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = 'toggle-achieve';
-    if (data.achieved) toggleBtn.classList.add('achieved');
-    toggleBtn.textContent = data.achieved ? '達成済み' : '未達成';
+    const achievePill = document.createElement('button');
+    achievePill.type = 'button';
+    achievePill.className = 'status-pill';
+    achievePill.dataset.status = 'achieved';
+    achievePill.textContent = '達成';
+
+    const offPill = document.createElement('button');
+    offPill.type = 'button';
+    offPill.className = 'status-pill';
+    offPill.dataset.status = 'off';
+    offPill.textContent = 'オフ';
 
     const status = document.createElement('span');
     status.className = 'row-status';
+
+    const refreshPills = () => {
+      const cur = getStatusOf(data);
+      achievePill.classList.toggle('active', cur === 'achieved');
+      offPill.classList.toggle('active', cur === 'off');
+    };
+    refreshPills();
 
     const setStatus = (msg, ms = 1800) => {
       status.textContent = msg;
@@ -367,50 +481,117 @@ function renderRecordDetail() {
       setStatus('保存中...', 0);
       try {
         const updated = await saveSession(state.selectedDate, s.num, { task: newTask });
-        state.weekRecords[state.selectedDate] = updated;
-        if (state.selectedDate === formatDate(new Date())) {
-          state.todayRecord = updated;
-          renderSessionTab();
-        }
-        renderWeeklyGrid();
-        setStatus('保存しました');
-        // refresh local data reference
         Object.assign(data, updated[sessionKey(s.num)] || {});
-      } catch (e) {
+        renderWeeklyGrid();
+        renderCalendar();
+        if (state.selectedDate === state.todayDate) renderSessionTab();
+        setStatus('保存しました');
+      } catch {
         setStatus('保存に失敗しました');
       }
     });
 
-    toggleBtn.addEventListener('click', async () => {
-      const newAchieved = !data.achieved;
+    const handlePill = async (target) => {
+      const cur = getStatusOf(data);
+      const newStatus = cur === target ? null : target;
       setStatus('保存中...', 0);
       try {
         const updated = await saveSession(state.selectedDate, s.num, {
           task: ta.value.trim(),
-          achieved: newAchieved,
+          status: newStatus,
         });
-        state.weekRecords[state.selectedDate] = updated;
-        if (state.selectedDate === formatDate(new Date())) {
-          state.todayRecord = updated;
-          renderSessionTab();
-        }
         Object.assign(data, updated[sessionKey(s.num)] || {});
-        toggleBtn.textContent = newAchieved ? '達成済み' : '未達成';
-        toggleBtn.classList.toggle('achieved', newAchieved);
+        refreshPills();
         renderWeeklyGrid();
-        setStatus(newAchieved ? '達成を記録しました' : '達成を取り消しました');
-      } catch (e) {
+        renderCalendar();
+        if (state.selectedDate === state.todayDate) renderSessionTab();
+        setStatus(
+          newStatus === 'achieved'
+            ? '達成を記録しました'
+            : newStatus === 'off'
+              ? 'オフとして記録しました'
+              : '状態を解除しました'
+        );
+      } catch {
         setStatus('保存に失敗しました');
       }
-    });
+    };
 
-    actions.appendChild(toggleBtn);
+    achievePill.addEventListener('click', () => handlePill('achieved'));
+    offPill.addEventListener('click', () => handlePill('off'));
+
+    actions.appendChild(achievePill);
+    actions.appendChild(offPill);
     actions.appendChild(status);
     body.appendChild(ta);
     body.appendChild(actions);
     row.appendChild(meta);
     row.appendChild(body);
     listEl.appendChild(row);
+  }
+}
+
+// ---------- CSV export ----------
+
+function csvEscape(value) {
+  if (value == null) return '';
+  const s = String(value);
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function recordsToCsv(allRecords) {
+  const header = ['date', 'session', 'start', 'end', 'task', 'status'];
+  const lines = [header.join(',')];
+  const dates = Object.keys(allRecords).sort();
+  for (const date of dates) {
+    const rec = allRecords[date] || {};
+    for (const s of SESSIONS) {
+      const data = rec[sessionKey(s.num)] || {};
+      const status = getStatusOf(data);
+      // Skip rows with no content at all to keep the export compact.
+      if (!data.task && !status) continue;
+      lines.push(
+        [
+          date,
+          s.num,
+          `${String(s.start).padStart(2, '0')}:00`,
+          `${String(s.end).padStart(2, '0')}:00`,
+          data.task || '',
+          status || '',
+        ]
+          .map(csvEscape)
+          .join(',')
+      );
+    }
+  }
+  return lines.join('\r\n') + '\r\n';
+}
+
+async function handleExportCsv() {
+  const btn = document.getElementById('export-csv');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '取得中...';
+  try {
+    const all = await fetchAllRecords();
+    Object.assign(state.records, all);
+    const csv = recordsToCsv(all);
+    const BOM = String.fromCharCode(0xfeff);
+    const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `time-blocked-todo-${formatDate(new Date())}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('エクスポートに失敗しました: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
   }
 }
 
@@ -426,40 +607,90 @@ function setupTabs() {
       document.getElementById(`tab-${tab}`).classList.add('active');
 
       if (tab === 'record') {
-        await loadWeekRecords();
-        if (!state.selectedDate) {
-          state.selectedDate = formatDate(new Date());
+        if (state.calendar.year == null) {
+          const now = new Date();
+          state.calendar = { year: now.getFullYear(), month: now.getMonth() };
         }
+        if (!state.selectedDate) state.selectedDate = formatDate(new Date());
+        await Promise.all([loadWeekRecords(), loadCalendarRecords()]);
         renderRecordTab();
       } else if (tab === 'session') {
-        // Refresh today's record when returning to session tab.
         try {
-          state.todayRecord = await fetchDayRecord(formatDate(new Date()));
-        } catch (e) {}
+          state.todayDate = formatDate(new Date());
+          state.todayRecord = await fetchDayRecord(state.todayDate);
+        } catch {}
         renderSessionTab();
       }
     });
   });
 }
 
+function setupCalendarNav() {
+  document.getElementById('prev-month').addEventListener('click', async () => {
+    let { year, month } = state.calendar;
+    month -= 1;
+    if (month < 0) {
+      month = 11;
+      year -= 1;
+    }
+    state.calendar = { year, month };
+    await loadCalendarRecords();
+    renderCalendar();
+  });
+
+  document.getElementById('next-month').addEventListener('click', async () => {
+    let { year, month } = state.calendar;
+    month += 1;
+    if (month > 11) {
+      month = 0;
+      year += 1;
+    }
+    state.calendar = { year, month };
+    await loadCalendarRecords();
+    renderCalendar();
+  });
+
+  document.getElementById('today-month').addEventListener('click', async () => {
+    const now = new Date();
+    state.calendar = { year: now.getFullYear(), month: now.getMonth() };
+    state.selectedDate = formatDate(now);
+    await loadCalendarRecords();
+    renderRecordDetail();
+    renderCalendar();
+    renderWeeklyGrid();
+  });
+}
+
 // ---------- Init ----------
 
 async function init() {
+  state.todayDate = formatDate(new Date());
   renderTodayLabel();
   setupTabs();
+  setupCalendarNav();
 
   document.getElementById('task-input').addEventListener('blur', handleTaskBlur);
-  document.getElementById('achieve-btn').addEventListener('click', handleAchieveClick);
+  document.getElementById('achieve-btn').addEventListener('click', () =>
+    handleStatusButtonClick('achieved')
+  );
+  document.getElementById('off-btn').addEventListener('click', () =>
+    handleStatusButtonClick('off')
+  );
+  document.getElementById('export-csv').addEventListener('click', handleExportCsv);
 
   try {
-    state.todayRecord = await fetchDayRecord(formatDate(new Date()));
-  } catch (e) {
+    state.todayRecord = await fetchDayRecord(state.todayDate);
+  } catch {
     state.todayRecord = {};
   }
   renderSessionTab();
 
-  // Update timer (every 30s for minute display + progress bar).
   setInterval(() => {
+    const newToday = formatDate(new Date());
+    if (newToday !== state.todayDate) {
+      state.todayDate = newToday;
+      fetchDayRecord(newToday).catch(() => {});
+    }
     renderTodayLabel();
     if (document.getElementById('tab-session').classList.contains('active')) {
       renderSessionTab();

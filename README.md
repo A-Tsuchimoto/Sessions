@@ -4,8 +4,12 @@
 
 ## 機能
 
-- **セッションタブ** — 8:00–20:00 を2時間ごとに区切ってSession 1〜6を自動表示。現在のセッション名・残り分数・残り時間バーが何の操作もなく表示される。取り組む内容の記入と達成ボタンの押下が可能。
-- **記録タブ** — 直近7日間 × 6セッションのグリッドで達成状況を可視化。日付/セッションをタップして内容と達成判定を編集できる。
+- **セッションタブ** — 8:00–20:00 を2時間ごとに区切ってSession 1〜6を自動表示。現在のセッション名・残り分数・残り時間バーが何の操作もなく表示される。取り組む内容の記入、**達成**ボタン、**オフ**ボタン（移動・予定外の用事・休息などで集中作業ができなかったセッションを記録する用途）が押せる。両ボタンとも「もう一度押すと解除」のトグル式。
+- **記録タブ** — 三段構成:
+  1. **直近7日間グリッド** — 7日 × 6セッションのカラーグリッド。緑=達成 / 青=オフ / グレー=記入のみ / 暗=未記入。
+  2. **カレンダービュー** — 月単位で過去をさかのぼれる。前月/翌月の矢印 + 「今月」ボタンで移動。各日のセルに 6 セッション分のミニバーが並ぶ。
+  3. **詳細エディタ** — 選択された日付の 6 セッションを編集（内容の修正、達成/オフの切替）。
+- **CSVエクスポート** — 記録タブ右上のボタンから全記録を CSV ダウンロード。Excel/Google Sheets でそのまま開ける UTF-8 BOM 付き。空のセッションは行に含めずコンパクトに出力。
 
 ## ディレクトリ構成
 
@@ -16,6 +20,8 @@ public/                 静的アセット (Cloudflare Pages の出力ディレ�
   styles.css
 functions/api/records/  Pages Functions
   [date].js             GET/PUT /api/records/:date
+  index.js              GET /api/records (range / 全件)
+  _helpers.js           normalize / json レスポンスの共通モジュール
 wrangler.toml           Pages + KV のバインディング設定
 package.json            wrangler スクリプト
 ```
@@ -226,10 +232,24 @@ npm run deploy
 
 | Method | Path | 説明 |
 | --- | --- | --- |
-| GET | `/api/records/:date` | 指定日の `{ session1: { task, achieved }, ... }` を返す |
-| PUT | `/api/records/:date` | body `{ session: 1–6, task?: string, achieved?: boolean }` で部分更新 |
+| GET | `/api/records/:date` | 指定日の `{ session1: { task, status }, ... }` を返す。`status` は `"achieved"`, `"off"`, `null` のいずれか。 |
+| PUT | `/api/records/:date` | body `{ session: 1–6, task?: string, status?: "achieved"\|"off"\|null }` で部分更新。互換用に `achieved: boolean` も受け付ける。 |
+| GET | `/api/records` | 全記録を `{ "YYYY-MM-DD": { session1: {...}, ... }, ... }` 形式で返す（CSV エクスポート用）。 |
+| GET | `/api/records?start=YYYY-MM-DD&end=YYYY-MM-DD` | 指定範囲（両端含む）のみを返す（カレンダービュー用）。 |
 
 `:date` は `YYYY-MM-DD` 形式。データはクライアントのローカル日付で保存されるため、タイムゾーンの異なる端末からアクセスする場合は注意。
+
+### CSV フォーマット
+
+`time-blocked-todo-YYYY-MM-DD.csv` というファイル名でダウンロード。UTF-8 BOM 付き。
+
+```
+date,session,start,end,task,status
+2026-05-01,1,08:00,10:00,"原稿のたたき作成",achieved
+2026-05-01,3,12:00,14:00,"打ち合わせ移動",off
+```
+
+`status` カラムは `achieved` / `off` / 空文字（記入のみ未判定）。記入も状態もない空セッションは行に含まれない。
 
 ## 注意
 
