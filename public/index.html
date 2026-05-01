@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#1f2937" />
+  <title>Time-Blocked Todo</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>Time-Blocked Todo</h1>
+      <div id="today-label" class="today-label"></div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="session">セッション</button>
+      <button class="tab" data-tab="record">記録</button>
+    </nav>
+
+    <main>
+      <!-- Session Tab -->
+      <section id="tab-session" class="tab-content active">
+        <div class="card current-session">
+          <div class="session-head">
+            <h2 id="session-title">Session 1</h2>
+            <span id="session-range" class="session-range">8:00 - 10:00</span>
+          </div>
+          <div class="time-info">
+            残り <strong id="time-remaining">--</strong> 分
+          </div>
+          <div class="progress-bar" aria-hidden="true">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+          <div id="session-meta" class="session-meta"></div>
+        </div>
+
+        <div class="card task-section">
+          <label for="task-input" class="label">取り組む内容</label>
+          <textarea
+            id="task-input"
+            placeholder="このセッションで取り組むことを一言で..."
+            rows="3"
+          ></textarea>
+          <div class="actions">
+            <button id="achieve-btn" class="btn btn-primary">達成</button>
+            <span id="status-msg" class="status-msg" aria-live="polite"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Record Tab -->
+      <section id="tab-record" class="tab-content">
+        <div class="card weekly-view">
+          <h2>直近7日間</h2>
+          <div id="weekly-grid" class="weekly-grid"></div>
+          <div class="legend">
+            <span class="dot dot-achieved"></span> 達成
+            <span class="dot dot-task"></span> 記入のみ
+            <span class="dot dot-empty"></span> 未記入
+          </div>
+        </div>
+
+        <div class="card record-detail">
+          <h3 id="record-detail-title">日付を選択してください</h3>
+          <div id="record-detail-list" class="record-detail-list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
