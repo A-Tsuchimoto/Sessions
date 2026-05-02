@@ -53,11 +53,13 @@
 
       <!-- Record Tab -->
       <section id="tab-record" class="tab-content">
+        <div class="card record-detail">
+          <h3 id="record-detail-title">日付を選択してください</h3>
+          <div id="record-detail-list" class="record-detail-list"></div>
+        </div>
+
         <div class="card">
-          <div class="record-header">
-            <h2>直近7日間</h2>
-            <button id="export-csv" class="btn btn-secondary" type="button">CSVエクスポート</button>
-          </div>
+          <h2 class="card-title">直近7日間</h2>
           <div id="weekly-grid" class="weekly-grid"></div>
           <div class="legend">
             <span class="dot dot-achieved"></span> 達成
@@ -75,11 +77,9 @@
             <button id="today-month" class="btn-icon-text" type="button">今月</button>
           </div>
           <div id="calendar-grid" class="calendar-grid"></div>
-        </div>
-
-        <div class="card record-detail">
-          <h3 id="record-detail-title">日付を選択してください</h3>
-          <div id="record-detail-list" class="record-detail-list"></div>
+          <div class="calendar-footer">
+            <button id="export-csv" class="btn btn-secondary" type="button">CSVエクスポート（全期間）</button>
+          </div>
         </div>
       </section>
     </main>
